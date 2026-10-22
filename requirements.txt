@@ -1,0 +1,5 @@
+fastmcp>=2.1.0
+python-chess>=1.999
+python-dotenv>=1.0.0
+requests>=2.31.0
+weasyprint>=62.0

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Runtime output and databases
+out/
+*.db
+*.db-*
+
+# Secrets / environment
+.env
+
+# Backups and temp files
+*.bak
+*.bak-*
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
