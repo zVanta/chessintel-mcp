@@ -1006,9 +1006,11 @@ def njcc_onepager(
 
     Player names, result, opening, accuracy and evaluations come from the PGN
     headers and Stockfish, so they are never invented. The optional prose
-    fields (``title``, ``key_moment``, ``big_ideas``, ``things_to_remember``,
-    ``chess_words``) personalise the wording; leave them empty for automatic
-    plain-language text.
+    fields (``title``, ``key_moment``, ``big_ideas``, ``things_to_remember``)
+    personalise the wording; leave them empty for automatic plain-language text.
+
+    The chess-words glossary is generated automatically from the game's verified
+    motifs with correct definitions — do NOT pass ``chess_words`` (it is ignored).
     """
     from . import njcc
 

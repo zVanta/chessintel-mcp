@@ -340,12 +340,25 @@ def _auto_remember(lecture: Dict[str, Any]) -> List[str]:
 _GLOSSARY = {
     "pin": "A piece that cannot move because it would expose a more valuable piece behind it.",
     "fork": "One move attacking two pieces at once — the knight's superpower.",
+    "skewer": "A piece in front of a valuable piece is attacked and must move, exposing the piece behind.",
     "hanging piece": "An undefended piece that can be captured for free.",
+    "trapped piece": "A piece with no safe square to move to.",
+    "discovered attack": "Moving one piece reveals an attack from another piece behind it.",
+    "double check": "Two pieces give check at the same time — the king must move.",
+    "checkmate": "The king is in check and has no way to escape — the game is over.",
     "passed pawn": "A pawn with no enemy pawns blocking its path to promotion.",
-    "f7 square": "The weakest square in Black's camp — only the king guards it.",
+    "open file": "A file with no pawns on it — a highway for rooks.",
+    "isolated pawn": "A pawn with no friendly pawns on the files next to it.",
+    "backward pawn": "A pawn left behind that cannot be protected by its neighbours.",
+    "outpost": "A square deep in enemy territory that no enemy pawn can attack.",
     "development": "Getting pieces out quickly — don't move the same piece twice.",
+    "castling": "The king moves two squares toward a rook and the rook jumps over — the fastest way to safety.",
+    "tempo": "A move that forces the opponent to respond — time is an advantage.",
+    "f7 square": "The weakest square in Black's camp — only the king guards it.",
     "back rank": "The row the king starts on — always give the king an escape square.",
     "knight sacrifice": "Giving up a knight to smash open the enemy king's position.",
+    "zugzwang": "Any move makes your position worse — the worst kind of 'must move'.",
+    "opposition": "Kings facing each other with one square between — the key endgame skill.",
 }
 
 
@@ -361,7 +374,7 @@ def _auto_glossary(lecture: Dict[str, Any]) -> List[Dict[str, str]]:
                 words.append({"word": term, "meaning": meaning})
             if len(words) >= 5:
                 return words
-    for term in ("development", "hanging piece", "passed pawn"):
+    for term in ("development", "hanging piece", "passed pawn", "pin", "fork"):
         if term not in seen and len(words) < 5:
             seen.add(term)
             words.append({"word": term, "meaning": _GLOSSARY[term]})
@@ -877,9 +890,11 @@ def to_onepager_html(lecture: Dict[str, Any], prose: Optional[Dict[str, Any]] = 
         lessons = [lessons]
     lessons_html = "\n".join(f"  <li>{_esc(str(r))}</li>" for r in lessons[:3])
 
-    glossary = prose.get("chess_words") or _auto_glossary(lecture)
+    # Vocabulary definitions are ALWAYS from the verified glossary — never from
+    # the model, which can leave meanings empty or invent them.
+    glossary = _auto_glossary(lecture)
     glossary_rows = "\n".join(
-        f"<tr><td><strong>{_esc(str(g.get('word', '')))}</strong></td>"
+        f"<tr><td><strong>{_esc(str(g.get('word', '')).title())}</strong></td>"
         f"<td>{_esc(str(g.get('meaning', '')))}</td></tr>"
         for g in glossary[:5]
     )
