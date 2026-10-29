@@ -16,7 +16,7 @@ import html as _html
 import io
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import chess
 
@@ -707,6 +707,16 @@ def _scoresheet_html(lecture: Dict[str, Any]) -> str:
         b = sans[2 * (n - 1) + 1] if 2 * (n - 1) + 1 < len(sans) else ""
         pairs.append((n, w, b))
 
+    # Very long games (100+ plies) do not fit one page — abridge the middle.
+    abridged = ""
+    if len(pairs) > 50:
+        head, tail = pairs[:30], pairs[-8:]
+        first_omitted = head[-1][0] + 1
+        last_omitted = tail[0][0] - 1
+        pairs = head + [("…", "", "")] + tail
+        abridged = (f'<p class="abridged">Moves {first_omitted}–{last_omitted} '
+                    f'omitted to fit one page — the full score is in the annotated PGN.</p>')
+
     half = (len(pairs) + 1) // 2
     left, right = pairs[:half], pairs[half:]
     header = ("<tr><th>No.</th><th>White</th><th>Black</th>"
@@ -719,7 +729,21 @@ def _scoresheet_html(lecture: Dict[str, Any]) -> str:
             f"<tr><td class='no'>{l[0]}</td><td>{_esc(l[1])}</td><td>{_esc(l[2])}</td>"
             f"<td class='no'>{r[0] or ''}</td><td>{_esc(r[1])}</td><td>{_esc(r[2])}</td></tr>"
         )
-    return "<table class='score'>" + header + "".join(rows) + "</table>"
+    return "<table class='score'>" + header + "".join(rows) + "</table>" + abridged
+
+
+def _key_arrow(moment: Optional[Dict[str, Any]], fen: str) -> Optional[List[Tuple[str, str]]]:
+    """Arrow for the key-moment board: the better move, or the move played."""
+    if not moment or not fen:
+        return None
+    san = str(moment.get("best_san") or moment.get("san") or "").strip()
+    if not san:
+        return None
+    try:
+        move = chess.Board(fen).parse_san(san)
+    except Exception:
+        return None
+    return [(chess.square_name(move.from_square), chess.square_name(move.to_square))]
 
 
 def _did_you_know(lecture: Dict[str, Any]) -> str:
@@ -798,6 +822,8 @@ _CSS = """
   .ident .ul { display: inline-block; width: 150px; border-bottom: 1px solid #17181a; }
   .instr { font-style: italic; margin: 0 0 6px; }
   .ans { height: 13px; border-bottom: 1px solid #999; margin: 1px 0 4px; }
+  .abridged { font-size: 6.8pt; font-style: italic; text-align: center; margin: 1px 0 2px; color: #555; }
+  .answerkey { font-size: 6.8pt; color: #666; margin: 1px 0 2px; }
   .foot { margin-top: 3px; border-top: 2.5px double #17181a; padding-top: 2px;
     text-align: center; font-size: 6.8pt; letter-spacing: .05em; }
 """
@@ -832,7 +858,8 @@ def to_onepager_html(lecture: Dict[str, Any], prose: Optional[Dict[str, Any]] = 
     top = _top_moment(lecture)
     key_text = prose.get("key_moment") or _key_moment_text(top)
     key_fen = (top or {}).get("fen_before") or ""
-    key_diagram = _r.board_svg(key_fen, size=180) if key_fen else ""
+    key_arrows = _key_arrow(top, key_fen)
+    key_diagram = _r.board_svg(key_fen, size=180, arrows=key_arrows) if key_fen else ""
 
     ideas = prose.get("big_ideas")
     if isinstance(ideas, str):
@@ -937,7 +964,7 @@ def to_onepager_html(lecture: Dict[str, Any], prose: Optional[Dict[str, Any]] = 
 # Homework sheet
 # --------------------------------------------------------------------------
 
-def to_homework_html(lecture: Dict[str, Any]) -> str:
+def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] = None) -> str:
     white = _white(lecture)
     black = _black(lecture)
     opening = _opening(lecture)
@@ -1031,6 +1058,32 @@ def to_homework_html(lecture: Dict[str, Any]) -> str:
 
     b_diagram = (f'<div class="board">{km_diagram}</div>{km_caption}') if km_diagram else ""
 
+    puzzle_html = ""
+    if puzzle and puzzle.get("fen"):
+        try:
+            pb = chess.Board(puzzle["fen"])
+            side = "White" if pb.turn == chess.WHITE else "Black"
+            p_diagram = _r.board_svg(puzzle["fen"], size=130)
+            rating = puzzle.get("rating")
+            themes = ", ".join((puzzle.get("themes") or [])[:3])
+            cap = f"{side} to move — find the best move."
+            if rating:
+                cap += f" Rating {rating}."
+            if themes:
+                cap += f" Themes: {themes}."
+            ans = puzzle.get("first_move_san") or ""
+            puzzle_html = (
+                '<h2>&#9823; F. Today&#8217;s Puzzle (Lichess)</h2>'
+                f'<div class="board">{p_diagram}</div>'
+                f'<p class="caption">{_esc(cap)}</p>'
+                '<ol><li>What is the winning move, and what does it threaten?'
+                + blank(2) + '</li></ol>'
+            )
+            if ans:
+                puzzle_html += f'<p class="answerkey">Answer key: {_esc(ans)}</p>'
+        except Exception:
+            puzzle_html = ""
+
     doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1074,6 +1127,7 @@ def to_homework_html(lecture: Dict[str, Any]) -> str:
 {e_lines}
   </ol>
 
+{puzzle_html}
   <div class="foot">New Jersey Chess Club &middot; {_esc(level_label)} Lesson &middot; {_esc(str(theme))} &middot; HAND THIS BACK NEXT WEEK!</div>
 </body>
 </html>

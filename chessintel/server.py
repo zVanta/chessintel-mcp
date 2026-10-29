@@ -308,6 +308,7 @@ def get_tool_help() -> str:
         "  game ID or URL (use when the user shares a lichess link).\n"
         "- analyze_online_games(username, platform, max_games, depth): fetch + analyze.\n"
         "- player_summary(username): ratings, titles and account age across platforms.\n"
+        "- daily_puzzle(): today's Lichess puzzle (position, rating, themes, solution).\n"
         "\n"
         "POSITIONS (single position, no PGN needed)\n"
         "- evaluate_position(fen, depth, multipv): evaluation plus top lines.\n"
@@ -387,6 +388,40 @@ def fetch_lichess_game(game_id_or_url: str) -> dict[str, Any]:
     with its headers, so the player names, result and moves are exact.
     """
     return fetchers.fetch_lichess_game(game_id_or_url)
+
+
+def _fetch_daily_puzzle() -> dict[str, Any]:
+    """Fetch today's Lichess puzzle. Returns ok/error plus the puzzle data."""
+    import urllib.request
+
+    url = "https://lichess.org/api/puzzle/daily"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "chessintel/1.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    puzzle = data.get("puzzle") or {}
+    game = data.get("game") or {}
+    return {
+        "ok": True,
+        "id": puzzle.get("id"),
+        "rating": puzzle.get("rating"),
+        "themes": puzzle.get("themes") or [],
+        "fen": data.get("fen") or game.get("fen"),
+        "solution_uci": puzzle.get("solution") or [],
+        "pgn": game.get("pgn"),
+    }
+
+
+@mcp.tool()
+def daily_puzzle() -> dict[str, Any]:
+    """Today's Lichess puzzle — position, rating, themes and solution.
+
+    Useful when the user wants a fresh tactical position, or as extra credit
+    on a homework sheet (njcc_onepager adds it automatically).
+    """
+    return _fetch_daily_puzzle()
 
 
 @mcp.tool()
@@ -1013,7 +1048,26 @@ def njcc_onepager(
     }
 
     if include_homework:
-        hw_html = njcc.to_homework_html(lecture)
+        puzzle = None
+        try:
+            dp = _fetch_daily_puzzle()
+            if dp.get("ok") and dp.get("fen"):
+                first = ""
+                try:
+                    sol = dp.get("solution_uci") or []
+                    if sol:
+                        first = chess.Board(dp["fen"]).san(chess.Move.from_uci(sol[0]))
+                except Exception:
+                    first = ""
+                puzzle = {
+                    "fen": dp["fen"],
+                    "rating": dp.get("rating"),
+                    "themes": dp.get("themes"),
+                    "first_move_san": first,
+                }
+        except Exception:
+            puzzle = None
+        hw_html = njcc.to_homework_html(lecture, puzzle=puzzle)
         hw_html_path = _write_output(f"{base}-homework.html", hw_html)
         hw_pdf_path = os.path.join(out_dir, f"{base}-homework.pdf")
         hw_pdf = njcc.html_to_pdf(hw_html, hw_pdf_path)
