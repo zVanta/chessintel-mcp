@@ -1010,7 +1010,10 @@ def njcc_onepager(
     personalise the wording; leave them empty for automatic plain-language text.
 
     The chess-words glossary is generated automatically from the game's verified
-    motifs with correct definitions — do NOT pass ``chess_words`` (it is ignored).
+    motifs. You MAY pass ``chess_words`` as a list of {"word", "meaning"} pairs
+    (e.g. for a named teaching format such as Ken Thomas) — but entries missing a
+    meaning are replaced by the automatic verified definitions, so the column is
+    never blank.
     """
     from . import njcc
 

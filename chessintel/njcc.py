@@ -890,9 +890,22 @@ def to_onepager_html(lecture: Dict[str, Any], prose: Optional[Dict[str, Any]] = 
         lessons = [lessons]
     lessons_html = "\n".join(f"  <li>{_esc(str(r))}</li>" for r in lessons[:3])
 
-    # Vocabulary definitions are ALWAYS from the verified glossary — never from
-    # the model, which can leave meanings empty or invent them.
+    # Vocabulary defaults to the verified glossary. Model-supplied words are
+    # honoured ONLY when they include a real definition, so the column can
+    # never render blank while still allowing a named format (e.g. Ken Thomas).
     glossary = _auto_glossary(lecture)
+    custom = prose.get("chess_words")
+    if isinstance(custom, list):
+        valid = []
+        for g in custom:
+            if not isinstance(g, dict):
+                continue
+            word = str(g.get("word") or g.get("term") or "").strip()
+            meaning = str(g.get("meaning") or g.get("definition") or "").strip()
+            if word and meaning:
+                valid.append({"word": word, "meaning": meaning})
+        if valid:
+            glossary = valid[:5]
     glossary_rows = "\n".join(
         f"<tr><td><strong>{_esc(str(g.get('word', '')).title())}</strong></td>"
         f"<td>{_esc(str(g.get('meaning', '')))}</td></tr>"
