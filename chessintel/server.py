@@ -314,16 +314,15 @@ def get_tool_help() -> str:
         "- best_moves(fen, depth, num): ranked candidate moves.\n"
         "- compare_moves(fen, moves, depth): grade the moves a student is choosing between.\n"
         "\n"
-        "LECTURES (build a lesson from a real game)\n"
+        "LESSONS (the ONLY lesson tool)\n"
         "- njcc_onepager(pgn, level, title?, big_ideas?, things_to_remember?, ...):\n"
-        "  the ONE-PAGE club lesson. Returns a 1-page lesson PDF PLUS a homework PDF\n"
-        "  (questions to answer). Use this for any one-page, handout, printable,\n"
-        "  NJCC, or \"questions to answer\" request.\n"
-        "- lecture_from_pgn(pgn, ...): the FULL multi-page lecture (Markdown + PDF).\n"
-        "  Use only for deep analysis or a full multi-page lecture, NOT a one-pager.\n"
-        "- export_annotated_pgn(pgn, depth): PGN with [%eval] annotations, importable\n"
-        "  into Shredder or ChessBase.\n"
-        "- make_worksheet(pgn, ...): printable worksheet, student blanks plus answer key.\n"
+        "  THE lesson tool. Returns a 1-page lesson PDF PLUS a homework PDF\n"
+        "  (questions to answer). Use it for ANY of: lesson, lecture, study,\n"
+        "  one-pager, handout, printable, class sheet, homework, NJCC, or a\n"
+        "  request to follow a named teaching format (e.g. Ken Thomas). There is\n"
+        "  NO multi-page lesson format — never look for another lesson tool.\n"
+        "- export_annotated_pgn(pgn, depth): PGN with [%eval] annotations,\n"
+        "  importable into Shredder or ChessBase.\n"
         "\n"
         "LIBRARY & DRILLS (SQLite longitudinal memory)\n"
         "- save_lecture / list_lectures, add_drills_from_lecture, due_drills,\n"
@@ -336,7 +335,9 @@ def get_tool_help() -> str:
         "exactly. Never describe a move, tactic or result they did not report, and\n"
         "never claim an opening that the analysis reported as unidentified. Never\n"
         "use web_search to find a game — use find_game. Never correct a player's\n"
-        "name or colour from memory — trust find_game's PGN headers."
+        "name or colour from memory — trust find_game's PGN headers. Every\n"
+        "lesson, lecture, study or handout request uses njcc_onepager only — the\n"
+        "club produces one-page lessons, nothing else."
     )
 
 
@@ -875,7 +876,6 @@ def render_lecture(
     }
 
 
-@mcp.tool()
 def lecture_from_pgn(
     pgn: str,
     player: str = "",
@@ -888,14 +888,11 @@ def lecture_from_pgn(
     kid_name: str = "",
     include_model: bool = False,
 ) -> dict[str, Any]:
-    """Build AND render a complete lecture from a PGN in one call.
+    """Internal helper — NOT exposed to the agent (no @mcp.tool decorator).
 
-    This is the tool to reach for. It returns the finished Markdown, the paths of
-    the rendered files, and the verified facts the narrative must be built from.
-
-    Pass ``kid_name`` to also file the lecture and seed spaced-repetition drill
-    cards for that player. Set ``include_model`` to also return the full
-    structured model (large).
+    The club only wants one-page lessons, so any lesson/lecture/study request
+    must go through ``njcc_onepager``. This multi-page report renderer is kept
+    for potential internal use only.
     """
     lecture = lectures_mod.build_lecture(
         pgn,
@@ -1050,9 +1047,12 @@ def export_annotated_pgn(pgn: str, depth: int = 14, filename: str = "") -> dict[
     }
 
 
-@mcp.tool()
 def make_worksheet(pgn: str, player: str = "", filename: str = "") -> dict[str, Any]:
-    """Build a printable worksheet from a game: positions with blanks, plus an answer key."""
+    """Internal helper — NOT exposed to the agent.
+
+    ``njcc_onepager`` already returns the homework sheet, so this standalone
+    worksheet is kept for internal use only.
+    """
     lecture = lectures_mod.build_lecture(pgn, player=player or None)
     text = renderers.to_worksheet(lecture)
     base = filename or f"{_slug('worksheet')}-{_stamp()}"
