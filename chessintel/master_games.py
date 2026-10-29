@@ -10,11 +10,15 @@ Two sources, in order:
 
 from __future__ import annotations
 
+import io
 import re
 import unicodedata
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
+
+import chess
+import chess.pgn
 
 from . import famous_games
 
@@ -127,6 +131,15 @@ def _header(pgn: str, key: str) -> str:
     return _fold(m.group(1)) if m else ""
 
 
+def _move_count(pgn: str) -> int:
+    """Number of mainline moves in a PGN (0 for match/collection stubs)."""
+    try:
+        node = chess.pgn.read_game(io.StringIO(pgn))
+        return len(list(node.mainline_moves())) if node else 0
+    except Exception:
+        return 0
+
+
 def _score(pgn: str, parsed: Dict[str, Any]) -> int:
     head = _fold(pgn[:700])
     white_header = _header(pgn, "White")
@@ -205,6 +218,9 @@ def find_game(query: str) -> Dict[str, Any]:
             continue
         if not _matches_players(pgn):
             continue
+        # A match/collection page has the right names but zero moves — unusable.
+        if _move_count(pgn) == 0:
+            continue
         score = _score(pgn, parsed)
         if score > best_score:
             best_score = score
@@ -216,4 +232,16 @@ def find_game(query: str) -> Dict[str, Any]:
             "message": "No game matching those players/year was found. Ask the user to paste the PGN or the moves.",
         }
 
-    return {"found": True, "source": "chessgames.com", "pgn": best_pgn}
+    def _hdr(key: str) -> str:
+        m = re.search(rf'\[{key}\s+"([^"]+)"\]', best_pgn)
+        return m.group(1) if m else ""
+
+    return {
+        "found": True,
+        "source": "chessgames.com",
+        "event": _hdr("Event"),
+        "white": _hdr("White"),
+        "black": _hdr("Black"),
+        "result": _hdr("Result"),
+        "pgn": best_pgn,
+    }
