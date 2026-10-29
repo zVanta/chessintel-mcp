@@ -160,6 +160,30 @@ def _move_text(lecture: Dict[str, Any]) -> str:
         return ""
 
 
+def _sans_list(lecture: Dict[str, Any]) -> List[str]:
+    """Replay the PGN and return the SAN of every move, in order."""
+    pgn = (lecture.get("game") or {}).get("pgn") or ""
+    try:
+        node = chess.pgn.read_game(io.StringIO(pgn))
+        if node is None:
+            return []
+        board = node.board()
+        out: List[str] = []
+        for mv in node.mainline_moves():
+            out.append(board.san(mv))
+            board.push(mv)
+        return out
+    except Exception:
+        return []
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def _top_moment(lecture: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     moments = lecture.get("moments") or []
     if not moments:
@@ -1016,24 +1040,36 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
         c = str(top.get("color") or "the player").title()
         km_caption = f'<div class="caption">{_esc(c)} to move — what would you play?</div>'
 
+    sans = _sans_list(lecture)
+    n_plies = len(sans)
+    final_san = sans[-1] if sans else ""
+    eco = str(((lecture.get("game") or {}).get("opening") or {}).get("eco") or "")
+    # A White move about a third of the way in (always inside the printed scoresheet).
+    probe_idx = 2 * min(n_plies // 6, 24)
+    probe_num = probe_idx // 2 + 1
+    probe_san = sans[probe_idx] if 0 <= probe_idx < n_plies else ""
+
     a_lines = (
         f"<li>Who played White, and who played Black?{blank()}</li>"
-        f"<li>What opening was played?{blank()}</li>"
-        f"<li>How did the game finish — and with which move?{blank()}</li>"
+        f"<li>What opening was played"
+        + (f" (ECO {_esc(eco)})" if eco else "")
+        + f"?{blank()}</li>"
+        f"<li>What was the result?{blank()}</li>"
     )
 
-    if top and top in errors:
+    if top:
         color = str(top.get("color") or "the player").title()
         san = str(top.get("san"))
         best = top.get("best_san")
         b_lines = (
-            f"<li>The computer says ONE move changed the whole game. Which move was it, and who played it?{blank()}</li>"
+            f"<li>The engine says ONE move changed the whole game. Which move was it, and who played it?{blank()}</li>"
             f"<li>Set up the position in the diagram above. It is {_esc(color)} to move. "
             f"Before you look at the answer, what would YOU play, and why?{blank(2)}</li>"
         )
         if best:
             b_lines += (
                 f"<li>The better move was {_esc(best)}. What does it do that {_esc(san)} did not?{blank(2)}</li>"
+                f"<li>What did {_esc(san)} allow the opponent to do?{blank(2)}</li>"
             )
         else:
             b_lines += f"<li>What did {_esc(san)} let the opponent do?{blank(2)}</li>"
@@ -1046,7 +1082,12 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
 
     c_lines = ""
     if w_acc is not None and b_acc is not None:
-        c_lines = f"<li>Which player was more accurate, and by how much?{blank()}</li>"
+        c_lines += f"<li>Which player was more accurate, and by how much?{blank()}</li>"
+    if top:
+        c_lines += (
+            f"<li>The score swung the most at {_esc(_move_label(top))}. "
+            f"Roughly how much did the evaluation change, and in whose favour?{blank(2)}</li>"
+        )
     if errors:
         c_lines += f"<li>Which single move was the biggest error, and who played it?{blank()}</li>"
     if w_acc is not None and b_acc is not None:
@@ -1061,6 +1102,8 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
         c_lines = f"<li>Who had the better position at the end — White or Black, and how can you tell?{blank()}</li>"
 
     d_lines = ""
+    if top and str(top.get("motif") or "").lower() not in ("", "good"):
+        d_lines += f"<li>Name ONE tactic that appears in this game, and the move where it happened.{blank()}</li>"
     if errors:
         concept = re.sub(r"[.?!]+$", "", str((errors[0].get("beats") or {}).get("the_concept") or "")).strip()
         if concept:
@@ -1070,6 +1113,17 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
         d_lines += f"<li>The lesson calls {_esc(str(h.get('san')))}! the winning idea. What does it achieve?{blank(2)}</li>"
     if not d_lines:
         d_lines = f"<li>In your own words, what was the single most important idea in this game?{blank(2)}</li>"
+
+    # Recall questions that force the student to actually replay the game.
+    p_lines = ""
+    if probe_san:
+        p_lines += f"<li>Replay the game from the start. What was White's {_ordinal(probe_num)} move?{blank()}</li>"
+    if final_san:
+        p_lines += f"<li>What was the very last move of the game?{blank()}</li>"
+    if n_plies:
+        p_lines += f"<li>How many moves were played in total?{blank()}</li>"
+    if not p_lines:
+        p_lines = f"<li>Replay the game and write down the first ten moves from memory.{blank(3)}</li>"
 
     winner_side = "White" if result.startswith("1-0") else "Black" if result.startswith("0-1") else "the winner"
     e1 = (f"Set up the final position and play it out against a friend or the computer. "
@@ -1101,7 +1155,7 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
                 cap += f" Themes: {themes}."
             ans = puzzle.get("first_move_san") or ""
             puzzle_html = (
-                '<h2>&#9823; F. Today&#8217;s Puzzle (Lichess)</h2>'
+                '<h2>&#9823; G. Today&#8217;s Puzzle (Lichess)</h2>'
                 f'<div class="board">{p_diagram}</div>'
                 f'<p class="caption">{_esc(cap)}</p>'
                 '<ol><li>What is the winning move, and what does it threaten?'
@@ -1145,12 +1199,17 @@ def to_homework_html(lecture: Dict[str, Any], puzzle: Optional[Dict[str, Any]] =
 {c_lines}
   </ol>
 
-  <h2>&#9670; D. Think About It</h2>
+  <h2>&#9670; D. Tactics &amp; Ideas</h2>
   <ol>
 {d_lines}
   </ol>
 
-  <h2>&#9823; E. Do This At Home</h2>
+  <h2>&#9823; E. Prove You Studied</h2>
+  <ol>
+{p_lines}
+  </ol>
+
+  <h2>&#9733; F. Do This At Home</h2>
   <ol>
 {e_lines}
   </ol>
