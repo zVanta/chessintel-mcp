@@ -100,6 +100,10 @@ OCR_INBOX_DIR = os.environ.get(
     "CHESSINTEL_OCR_INBOX",
     os.path.join(os.path.dirname(storage.DB_PATH), "inbox"),
 )
+FILE_ROOT = os.environ.get(
+    "CHESSINTEL_FILE_ROOT",
+    os.path.dirname(storage.DB_PATH),
+)
 
 mcp = FastMCP("chessintel")
 
@@ -354,6 +358,11 @@ def get_tool_help() -> str:
         "- run_python(code, timeout_seconds=30): run a short Python snippet in a\n"
         "  locked-down subprocess (no network, dropped privileges). print() the\n"
         "  result. Use for parsing, JSON validation, Monte Carlo, list work.\n"
+        "\n"
+        "FILES (scoped to /var/lib/chessintel)\n"
+        "- file_list(directory=''): list files and folders.\n"
+        "- file_read(path, max_chars=50000): read a text file.\n"
+        "- file_write(path, content): write or overwrite a text file.\n"
         "\n"
         "META\n"
         "- health_check(): engine and configuration status.\n"
@@ -1495,6 +1504,86 @@ def run_python(code: str, timeout_seconds: int = 30) -> dict[str, Any]:
         "exit_code": proc.returncode,
         "stdout": (proc.stdout or "")[:50000],
         "stderr": (proc.stderr or "")[:5000],
+    }
+
+
+# ── Files (scoped) ────────────────────────────────────────────────────────
+
+def _scoped(path_str: str) -> str:
+    root = os.path.realpath(FILE_ROOT)
+    candidate = (
+        os.path.realpath(os.path.join(root, path_str))
+        if not os.path.isabs(path_str)
+        else os.path.realpath(path_str)
+    )
+    if candidate != root and not candidate.startswith(root + os.sep):
+        raise ValueError(f"path outside allowed root ({root})")
+    return candidate
+
+
+@mcp.tool()
+def file_list(directory: str = "") -> dict[str, Any]:
+    """List files and folders under the ChessIntel data root (/var/lib/chessintel)."""
+    try:
+        target = _scoped(directory or ".")
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not os.path.isdir(target):
+        return {"ok": False, "error": f"not a directory: {directory or '.'}"}
+    entries = []
+    for name in sorted(os.listdir(target)):
+        path = os.path.join(target, name)
+        entries.append({
+            "name": name,
+            "type": "dir" if os.path.isdir(path) else "file",
+            "size": os.path.getsize(path) if os.path.isfile(path) else None,
+        })
+    return {
+        "ok": True,
+        "directory": os.path.relpath(target, FILE_ROOT) or ".",
+        "entries": entries,
+    }
+
+
+@mcp.tool()
+def file_read(path: str, max_chars: int = 50000) -> dict[str, Any]:
+    """Read a text file under the ChessIntel data root (UTF-8)."""
+    try:
+        target = _scoped(path)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not os.path.isfile(target):
+        return {"ok": False, "error": f"not a file: {path}"}
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    total = len(text)
+    truncated = total > max_chars
+    return {
+        "ok": True,
+        "path": os.path.relpath(target, FILE_ROOT),
+        "characters": total,
+        "truncated": truncated,
+        "text": text[:max_chars] if truncated else text,
+    }
+
+
+@mcp.tool()
+def file_write(path: str, content: str) -> dict[str, Any]:
+    """Write (or overwrite) a text file under the ChessIntel data root."""
+    try:
+        target = _scoped(path)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return {
+        "ok": True,
+        "path": os.path.relpath(target, FILE_ROOT),
+        "bytes": len(content.encode("utf-8")),
     }
 
 
