@@ -92,6 +92,14 @@ PUBLIC_BASE = os.environ.get("CHESSINTEL_PUBLIC_BASE", "https://njxai.com").rstr
 TRANSPORT = os.environ.get("CHESSINTEL_TRANSPORT", "stdio").lower()
 HOST = os.environ.get("CHESSINTEL_HOST", "0.0.0.0")
 PORT = int(os.environ.get("CHESSINTEL_PORT", "8080"))
+ENTRY_LIST_PATH = os.environ.get(
+    "CHESSINTEL_ENTRY_LIST",
+    os.path.join(os.path.dirname(storage.DB_PATH), "entry_list.json"),
+)
+OCR_INBOX_DIR = os.environ.get(
+    "CHESSINTEL_OCR_INBOX",
+    os.path.join(os.path.dirname(storage.DB_PATH), "inbox"),
+)
 
 mcp = FastMCP("chessintel")
 
@@ -328,6 +336,24 @@ def get_tool_help() -> str:
         "LIBRARY & DRILLS (SQLite longitudinal memory)\n"
         "- save_lecture / list_lectures, add_drills_from_lecture, due_drills,\n"
         "  grade_drill, store_games, progress_report, save_report.\n"
+        "\n"
+        "CLUB / ENTRY LIST (the tournament entry list the club website pulls)\n"
+        "- entry_list_list(): show the current list (players, sections, totals).\n"
+        "- entry_list_add(name, section?, rating?, uscf_id?, email?, notes?): add\n"
+        "  a player. entry_list_remove(name): remove one.\n"
+        "- entry_list_set_event(event_name): name the tournament.\n"
+        "- entry_list_export(): CSV text of the whole list.\n"
+        "  The list is also published to a stable public URL the website can\n"
+        "  fetch (public_json / public_csv returned by entry_list_list).\n"
+        "\n"
+        "DOCUMENTS (OCR)\n"
+        "- ocr_document(source, language='eng'): OCR a scanned PDF or image into\n"
+        "  text. source = a filename already in the OCR inbox or an http(s) URL.\n"
+        "\n"
+        "COMPUTE (sandboxed)\n"
+        "- run_python(code, timeout_seconds=30): run a short Python snippet in a\n"
+        "  locked-down subprocess (no network, dropped privileges). print() the\n"
+        "  result. Use for parsing, JSON validation, Monte Carlo, list work.\n"
         "\n"
         "META\n"
         "- health_check(): engine and configuration status.\n"
@@ -1191,6 +1217,285 @@ def grade_drill(card_id: int, grade: str) -> dict[str, Any]:
     out the better they did, which is what makes the practice stick.
     """
     return storage.grade_drill_card(card_id, grade)
+
+
+# ── Club / entry list ──────────────────────────────────────────────────────
+#
+# One JSON file the Club Secretary agent owns. Every mutation is mirrored to
+# OUTPUT_DIR as entry_list.json + entry_list.csv so the club website can pull
+# the live list from a stable public URL (https://njxai.com/chessintel/...).
+
+def _entry_list_path() -> Path:
+    path = Path(ENTRY_LIST_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _load_entry_list() -> Dict[str, Any]:
+    path = _entry_list_path()
+    if not path.is_file():
+        return {"event": "", "updated_at": None, "players": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"event": "", "updated_at": None, "players": []}
+    if not isinstance(data, dict):
+        return {"event": "", "updated_at": None, "players": []}
+    data.setdefault("event", "")
+    data.setdefault("players", [])
+    return data
+
+
+def _entry_list_csv(data: Dict[str, Any]) -> str:
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["name", "section", "rating", "uscf_id", "email", "notes", "added_at"])
+    for p in data.get("players", []):
+        writer.writerow([
+            p.get("name", ""), p.get("section", ""), p.get("rating", ""),
+            p.get("uscf_id", ""), p.get("email", ""), p.get("notes", ""),
+            p.get("added_at", ""),
+        ])
+    return buf.getvalue()
+
+
+def _save_entry_list(data: Dict[str, Any]) -> None:
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    path = _entry_list_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+    _write_output("entry_list.json", json.dumps(data, indent=2, ensure_ascii=False))
+    _write_output("entry_list.csv", _entry_list_csv(data))
+
+
+@mcp.tool()
+def entry_list_list() -> dict[str, Any]:
+    """Show the current tournament entry list (players, section counts)."""
+    data = _load_entry_list()
+    players = data.get("players", [])
+    counts: Dict[str, int] = {}
+    for p in players:
+        sec = (p.get("section") or "").strip() or "unassigned"
+        counts[sec] = counts.get(sec, 0) + 1
+    return {
+        "event": data.get("event") or "(unnamed event)",
+        "updated_at": data.get("updated_at"),
+        "total": len(players),
+        "by_section": counts,
+        "players": players,
+        "public_json": _public_url("entry_list.json"),
+        "public_csv": _public_url("entry_list.csv"),
+    }
+
+
+@mcp.tool()
+def entry_list_add(
+    name: str,
+    section: str = "",
+    rating: str = "",
+    uscf_id: str = "",
+    email: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    """Add one player to the tournament entry list."""
+    clean = (name or "").strip()
+    if not clean:
+        return {"ok": False, "error": "name is required"}
+    data = _load_entry_list()
+    for p in data.get("players", []):
+        if (p.get("name") or "").strip().lower() == clean.lower():
+            return {"ok": False, "error": f"{clean!r} is already on the list", "player": p}
+    player = {
+        "name": clean,
+        "section": (section or "").strip(),
+        "rating": (rating or "").strip(),
+        "uscf_id": (uscf_id or "").strip(),
+        "email": (email or "").strip(),
+        "notes": (notes or "").strip(),
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data["players"].append(player)
+    _save_entry_list(data)
+    return {"ok": True, "player": player, "total": len(data["players"]),
+            "public_json": _public_url("entry_list.json")}
+
+
+@mcp.tool()
+def entry_list_remove(name: str) -> dict[str, Any]:
+    """Remove a player from the entry list (exact or substring match)."""
+    data = _load_entry_list()
+    players = data.get("players", [])
+    target = (name or "").strip().lower()
+    if not target:
+        return {"ok": False, "error": "name is required", "total": len(players)}
+    matches = [p for p in players if (p.get("name") or "").lower() == target]
+    if not matches:
+        matches = [p for p in players if target in (p.get("name") or "").lower()]
+    if not matches:
+        return {"ok": False, "error": f"no player matching {name!r}", "total": len(players)}
+    if len(matches) > 1:
+        return {"ok": False, "error": "ambiguous",
+                "candidates": [p.get("name") for p in matches]}
+    data["players"] = [p for p in players if p is not matches[0]]
+    _save_entry_list(data)
+    return {"ok": True, "removed": matches[0].get("name"), "total": len(data["players"])}
+
+
+@mcp.tool()
+def entry_list_set_event(event_name: str) -> dict[str, Any]:
+    """Set the tournament name shown at the top of the entry list."""
+    data = _load_entry_list()
+    data["event"] = (event_name or "").strip()
+    _save_entry_list(data)
+    return {"ok": True, "event": data["event"]}
+
+
+@mcp.tool()
+def entry_list_export() -> str:
+    """Return the entry list as CSV text (also mirrored to the public URL)."""
+    return _entry_list_csv(_load_entry_list())
+
+
+# ── Documents (OCR) ───────────────────────────────────────────────────────
+
+@mcp.tool()
+def ocr_document(source: str, language: str = "eng") -> dict[str, Any]:
+    """OCR a scanned PDF or image into text using tesseract on the server.
+
+    ``source`` is either a filename inside the OCR inbox
+    (/var/lib/chessintel/inbox, e.g. 'kenthomas.pdf') or an http(s) URL.
+    Returns the extracted text and also writes a .txt copy to the output dir.
+    """
+    import subprocess
+    import urllib.request
+    import tempfile
+
+    pdftoppm = shutil.which("pdftoppm") or "/usr/bin/pdftoppm"
+    tesseract = shutil.which("tesseract") or "/usr/bin/tesseract"
+    inbox = Path(OCR_INBOX_DIR)
+    inbox.mkdir(parents=True, exist_ok=True)
+
+    src = (source or "").strip()
+    work: Path
+    if src.startswith(("http://", "https://")):
+        fname = os.path.basename(src.split("?")[0]) or "download"
+        work = inbox / fname
+        try:
+            req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp, open(work, "wb") as fh:
+                fh.write(resp.read())
+        except Exception as exc:
+            return {"ok": False, "error": f"download failed: {exc}"}
+    else:
+        work = inbox / os.path.basename(src)
+        if not work.is_file():
+            return {"ok": False,
+                    "error": f"{src!r} not found in OCR inbox ({inbox}); "
+                             f"put the file there or pass a URL"}
+
+    try:
+        if work.suffix.lower() == ".pdf":
+            with tempfile.TemporaryDirectory() as td:
+                subprocess.run(
+                    [pdftoppm, "-r", "200", "-png", str(work),
+                     os.path.join(td, "page")],
+                    check=True, capture_output=True,
+                )
+                chunks: List[str] = []
+                for img in sorted(Path(td).glob("page*.png")):
+                    out = subprocess.run(
+                        [tesseract, str(img), "stdout", "-l", language],
+                        check=True, capture_output=True, text=True,
+                    )
+                    chunks.append(out.stdout)
+                text = "\n\n".join(chunks)
+        else:
+            out = subprocess.run(
+                [tesseract, str(work), "stdout", "-l", language],
+                check=True, capture_output=True, text=True,
+            )
+            text = out.stdout
+    except Exception as exc:
+        return {"ok": False, "error": f"OCR failed: {exc}"}
+
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "no text extracted (blank or low-resolution page?)"}
+    out_name = f"{work.stem}.txt"
+    _write_output(out_name, text)
+    return {
+        "ok": True,
+        "characters": len(text),
+        "text": text[:100000],
+        "truncated": len(text) > 100000,
+        "public_txt": _public_url(out_name),
+    }
+
+
+# ── Compute (sandboxed) ────────────────────────────────────────────────────
+
+@mcp.tool()
+def run_python(code: str, timeout_seconds: int = 30) -> dict[str, Any]:
+    """Run a short Python snippet in a locked-down subprocess and return its stdout.
+
+    Use for parsing, JSON validation, arithmetic, Monte Carlo, list/dict work.
+    The snippet must print() its result. Restrictions: no network, dropped
+    privileges (nobody), 60s max, ~512 MB memory cap, 20k char code cap. Linux only.
+    """
+    import subprocess
+    import tempfile
+
+    code = (code or "").strip()
+    if not code:
+        return {"ok": False, "error": "code is empty"}
+    if len(code) > 20000:
+        return {"ok": False, "error": "code too long (max 20000 chars)"}
+    timeout = max(1, min(int(timeout_seconds or 30), 60))
+
+    def _drop():
+        try:
+            os.setgroups([])
+        except Exception:
+            pass
+        try:
+            os.setgid(65534)
+            os.setuid(65534)
+        except Exception:
+            pass
+        try:
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout))
+            resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+        except Exception:
+            pass
+
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", code],
+                cwd=td,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                preexec_fn=_drop,
+                env={"PATH": "/usr/bin:/bin", "HOME": td, "PYTHONNOUSERSITE": "1"},
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"timed out after {timeout}s"}
+        except Exception as exc:
+            return {"ok": False, "error": f"exec failed: {exc}"}
+    return {
+        "ok": True,
+        "exit_code": proc.returncode,
+        "stdout": (proc.stdout or "")[:50000],
+        "stderr": (proc.stderr or "")[:5000],
+    }
 
 
 # ── Meta ───────────────────────────────────────────────────────────────────

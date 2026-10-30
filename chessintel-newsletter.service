@@ -1,0 +1,18 @@
+[Unit]
+Description=ChessIntel weekly newsletter generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/chessintel.env
+WorkingDirectory=/opt/chessintel/app
+ExecStart=/opt/chessintel/.venv/bin/python /opt/chessintel/weekly_newsletter.py
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/chessintel
+
+StandardOutput=journal
+StandardError=journal

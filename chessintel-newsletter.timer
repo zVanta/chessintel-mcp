@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the ChessIntel newsletter every Monday at 08:00 America/New_York
+
+[Timer]
+OnCalendar=Mon *-*-* 08:00:00 America/New_York
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
